@@ -1,8 +1,9 @@
 package provider
 
 import (
-	"ai/pkg/types"
 	"context"
+
+	"github.com/rahulshah/go-pi-ai/types"
 )
 
 type Provider interface {
@@ -15,4 +16,8 @@ type Provider interface {
 		ctx context.Context,
 		conversation types.Context,
 	) (types.AssistantMessage, error)
+
+	Model() string
+
+	ProviderType() types.ModelProvider
 }

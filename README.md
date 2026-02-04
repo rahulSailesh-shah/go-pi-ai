@@ -4,12 +4,12 @@ A flexible, provider-agnostic Go library for interacting with AI language models
 
 ## Features
 
-- 🔌 **Provider Abstraction**: Unified interface for multiple AI providers
-- 🌊 **Streaming Support**: Real-time streaming of AI responses with event-based updates
-- 🛠️ **Tool Calling**: Native support for function/tool calling with structured arguments
-- 📦 **Type-Safe**: Strongly-typed message and content structures
-- ⚙️ **Configuration Management**: Environment-based configuration with `.env` support
-- 🔄 **Multi-Turn Conversations**: Support for complex conversation flows with tool interactions
+- **Provider Abstraction**: Unified interface for multiple AI providers
+- **Streaming Support**: Real-time streaming of AI responses with event-based updates
+- **Tool Calling**: Native support for function/tool calling with structured arguments
+- **Type-Safe**: Strongly-typed message and content structures
+- **Configuration Management**: Environment-based configuration with `.env` support
+- **Multi-Turn Conversations**: Support for complex conversation flows with tool interactions
 
 ## Table of Contents
 
@@ -51,7 +51,7 @@ NVIDIA_API_KEY="your-api-key-here"
 2. **Run the example**:
 
 ```bash
-go run main.go
+go run cmd/example/main.go
 ```
 
 ## Architecture
@@ -59,12 +59,11 @@ go run main.go
 The library is organized into several key packages:
 
 ```
-pkg/
-├── config/       # Configuration management and environment loading
-├── models/       # Model registry and initialization
-├── provider/     # Provider interface and implementations
-│   └── openai/   # OpenAI-compatible provider implementation
-└── types/        # Core type definitions and interfaces
+├── cmd/example/                # Example application
+├── config/                     # Configuration management and environment loading
+├── provider/                   # Provider interface and registry
+├── internal/provider/openai/   # OpenAI-compatible provider implementation
+└── types/                      # Core type definitions and interfaces
 ```
 
 ### Core Concepts
@@ -83,7 +82,7 @@ pkg/
 The library uses environment variables for configuration, loaded via `.env` files:
 
 ```go
-import "ai/pkg/config"
+import "github.com/rahulshah/go-pi-ai/config"
 
 // Get provider configuration
 nvidiaConfig, ok := config.GetProvider(types.ApiNvidia)
@@ -103,9 +102,9 @@ if !ok {
 
 ```go
 import (
-    "ai/pkg/config"
-    "ai/pkg/models"
-    "ai/pkg/types"
+    "github.com/rahulshah/go-pi-ai/config"
+    "github.com/rahulshah/go-pi-ai/models"
+    "github.com/rahulshah/go-pi-ai/types"
     "context"
 )
 
@@ -305,40 +304,39 @@ type Provider interface {
 
 ```go
 // Add a model to the registry
-models.AddModel(providerType types.ModelProvider, id string, model provider.Provider)
+registry.AddModel(providerType types.ModelProvider, id string, model provider.Provider)
 
 // Get a model from the registry
-models.GetModel(providerType types.ModelProvider, id string) provider.Provider
+registry.GetModel(providerType types.ModelProvider, id string) provider.Provider
 ```
 
 ## Project Structure
 
 ```
 .
-├── main.go                          # Example usage
+├── cmd/example/
+│   └── main.go                      # Example usage
 ├── go.mod                           # Go module definition
 ├── go.sum                           # Dependency checksums
-├── .env                             # Environment configuration (not in git)
+├── .env.example                     # Environment configuration template
 ├── .gitignore                       # Git ignore rules
-└── pkg/
-    ├── config/
-    │   └── config.go                # Configuration loading and management
-    ├── models/
-    │   └── models.go                # Model registry and initialization
-    ├── provider/
-    │   ├── provider.go              # Provider interface definition
-    │   └── openai/
-    │       ├── openai.go            # OpenAI-compatible provider implementation
-    │       └── streaming.go         # Streaming event handling
-    └── types/
-        └── types.go                 # Core type definitions
+├── config/
+│   └── config.go                    # Configuration loading and management
+├── provider/
+│   ├── provider.go                  # Provider interface definition
+│   └── registry.go                  # Model registration
+├── internal/provider/
+│   └── openai/
+│       └── openai.go                # OpenAI-compatible provider implementation
+└── types/
+    └── types.go                     # Core type definitions
 ```
 
 ## Adding New Providers
 
 To add support for a new AI provider:
 
-1. **Implement the `Provider` interface** in `pkg/provider/<provider-name>/`:
+1. **Implement the `Provider` interface** in `internal/provider/<provider-name>/`:
 
 ```go
 type MyProvider struct {
@@ -354,7 +352,7 @@ func (p *MyProvider) Complete(ctx context.Context, conversation types.Context) (
 }
 ```
 
-2. **Add configuration** in `pkg/config/config.go`:
+2. **Add configuration** in `config/config.go`:
 
 ```go
 const (
@@ -369,13 +367,13 @@ AppConfig.Providers[types.ApiMyProvider] = ProviderConfig{
 }
 ```
 
-3. **Register models** in `pkg/models/models.go`:
+3. **Register models** in `provider/registry.go`:
 
 ```go
 if config, ok := config.GetProvider(types.ApiMyProvider); ok {
     for _, modelID := range config.Models {
         provider := myprovider.NewMyProvider(config, modelID)
-        AddModel(types.ApiMyProvider, modelID, provider)
+        registry.AddModel(types.ApiMyProvider, modelID, provider)
     }
 }
 ```

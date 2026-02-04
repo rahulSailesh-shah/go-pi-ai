@@ -1,6 +1,6 @@
-module ai
+module github.com/rahulshah/go-pi-ai
 
-go 1.25.1
+go 1.22
 
 require github.com/openai/openai-go/v3 v3.17.0
 
