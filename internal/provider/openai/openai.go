@@ -70,8 +70,6 @@ func (p *Provider) Stream(ctx context.Context, conversation types.Context) types
 	stream := types.NewAssistantMessageEventStream()
 
 	go func() {
-		defer stream.Close()
-
 		output := types.AssistantMessage{
 			Contents:  []types.Content{},
 			Provider:  p.providerType,
@@ -205,6 +203,7 @@ func (p *Provider) Stream(ctx context.Context, conversation types.Context) types
 		}
 
 		stream.Result <- output
+		stream.Close()
 	}()
 
 	return stream

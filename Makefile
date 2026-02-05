@@ -14,3 +14,11 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 all: clean build
+
+release:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Usage: make release VERSION=v1.2.3"; \
+		exit 1; \
+	fi
+	git tag $(VERSION)
+	git push origin $(VERSION)
