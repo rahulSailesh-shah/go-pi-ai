@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -9,6 +10,22 @@ import (
 	openaiProvider "github.com/rahulSailesh-shah/go-pi-ai/internal/provider/openai"
 	"github.com/rahulSailesh-shah/go-pi-ai/types"
 )
+
+func Stream(ctx context.Context, model types.Model, conversation types.Context) (types.AssistantMessageEventStream, error) {
+	p, err := GetModel(model.Provider, model.ID)
+	if err != nil {
+		return types.AssistantMessageEventStream{}, err
+	}
+	return p.Stream(ctx, conversation), nil
+}
+
+func Complete(ctx context.Context, model types.Model, conversation types.Context) (types.AssistantMessage, error) {
+	p, err := GetModel(model.Provider, model.ID)
+	if err != nil {
+		return types.AssistantMessage{}, err
+	}
+	return p.Complete(ctx, conversation)
+}
 
 // --- Global Registry ---
 var (

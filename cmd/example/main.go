@@ -12,12 +12,12 @@ import (
 )
 
 func main() {
-	model, err := provider.GetModel(types.ProviderNvidia, "openai/gpt-oss-20b")
-	if err != nil {
-		log.Fatalf("Failed to get model: %v", err)
+	model := types.Model{
+		Provider: types.ProviderNvidia,
+		ID:       "openai/gpt-oss-20b",
 	}
 
-	log.Printf("Using model: %s from provider: %s\n", model.Model(), model.ProviderType())
+	log.Printf("Using model: %s from provider: %s\n", model.ID, model.Provider)
 
 	tools := []types.Tool{
 		{
@@ -47,7 +47,10 @@ func main() {
 	}
 
 	log.Println("Starting streaming conversation...")
-	stream := model.Stream(context.Background(), conversation)
+	stream, err := provider.Stream(context.Background(), model, conversation)
+	if err != nil {
+		log.Fatalf("Streaming failed: %v", err)
+	}
 
 	// Drain events
 	var wg sync.WaitGroup
@@ -100,7 +103,7 @@ func main() {
 	}
 
 	log.Println("Starting completion call...")
-	completeMessage, err := model.Complete(context.Background(), conversation)
+	completeMessage, err := provider.Complete(context.Background(), model, conversation)
 	if err != nil {
 		log.Fatalf("Completion failed: %v", err)
 	}

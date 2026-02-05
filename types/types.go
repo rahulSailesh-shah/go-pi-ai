@@ -142,6 +142,12 @@ type Context struct {
 	Metadata     map[string]any
 }
 
+// Model represents a specific model from a provider
+type Model struct {
+	Provider ModelProvider
+	ID       string
+}
+
 // ModelProvider identifies a model provider
 type ModelProvider string
 
