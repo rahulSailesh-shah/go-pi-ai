@@ -9,7 +9,7 @@ import (
 
 	openaiSDK "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/rahulshah/go-pi-ai/types"
+	"github.com/rahulSailesh-shah/go-pi-ai/types"
 )
 
 type Config struct {

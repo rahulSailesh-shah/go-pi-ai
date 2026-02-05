@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rahulshah/go-pi-ai/provider"
-	"github.com/rahulshah/go-pi-ai/types"
+	"github.com/rahulSailesh-shah/go-pi-ai/provider"
+	"github.com/rahulSailesh-shah/go-pi-ai/types"
 )
 
 func main() {

@@ -3,7 +3,7 @@ package provider
 import (
 	"context"
 
-	"github.com/rahulshah/go-pi-ai/types"
+	"github.com/rahulSailesh-shah/go-pi-ai/types"
 )
 
 type Provider interface {

@@ -5,9 +5,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/rahulshah/go-pi-ai/config"
-	openaiProvider "github.com/rahulshah/go-pi-ai/internal/provider/openai"
-	"github.com/rahulshah/go-pi-ai/types"
+	"github.com/rahulSailesh-shah/go-pi-ai/config"
+	openaiProvider "github.com/rahulSailesh-shah/go-pi-ai/internal/provider/openai"
+	"github.com/rahulSailesh-shah/go-pi-ai/types"
 )
 
 // --- Global Registry ---

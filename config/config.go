@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/joho/godotenv"
-	"github.com/rahulshah/go-pi-ai/types"
+	"github.com/rahulSailesh-shah/go-pi-ai/types"
 )
 
 type ProviderConfig struct {
