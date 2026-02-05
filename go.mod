@@ -1,4 +1,4 @@
-module github.com/rahulshah/go-pi-ai
+module github.com/rahulSailesh-shah/go-pi-ai
 
 go 1.22
 
