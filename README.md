@@ -1,5 +1,7 @@
 # go-pi-ai
 
+> A Go implementation inspired by [pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://github.com/badlogic).
+
 A flexible, provider-agnostic Go library for interacting with AI language models. Currently supports OpenAI-compatible APIs (including NVIDIA's AI endpoints) with streaming and tool calling capabilities.
 
 ## Features
@@ -394,6 +396,8 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 [Add your license here]
 
 ## Acknowledgments
+
+This project is a Go implementation inspired by [pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://github.com/badlogic). Special thanks to him for the original TypeScript implementation that served as the foundation for this library's design.
 
 - Built with the [OpenAI Go SDK](https://github.com/openai/openai-go)
 - Supports OpenAI-compatible APIs
