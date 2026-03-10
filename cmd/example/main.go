@@ -97,6 +97,7 @@ func main() {
 	defer stream2.Close()
 
 	fmt.Println()
+	var streamResult gopiai.AssistantMessage
 	for {
 		event, err := stream2.Recv()
 		if err == io.EOF {
@@ -105,9 +106,23 @@ func main() {
 		if err != nil {
 			log.Fatalf("Stream error: %v", err)
 		}
-		if e, ok := event.(gopiai.EventTextDelta); ok {
+		switch e := event.(type) {
+		case gopiai.EventTextDelta:
 			fmt.Print(e.Delta)
+		case gopiai.EventDone:
+			streamResult = e.Message
 		}
 	}
-	fmt.Println()
+
+	fmt.Println("\n\n--------------------------------")
+
+	log.Printf("\n\nAccumulated response (%d content blocks):", len(streamResult.Contents))
+	for i, c := range streamResult.Contents {
+		switch content := c.(type) {
+		case gopiai.TextContent:
+			log.Printf("  [%d] text: %s", i, content.Text)
+		case gopiai.ToolCall:
+			log.Printf("  [%d] tool call: %s(%v)", i, content.Name, content.Arguments)
+		}
+	}
 }
