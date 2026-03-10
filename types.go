@@ -127,16 +127,16 @@ func (m UserMessage) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(struct {
-		Role      string             `json:"role"`
-		Timestamp time.Time          `json:"timestamp"`
-		Contents  []json.RawMessage  `json:"contents"`
+		Role      string            `json:"role"`
+		Timestamp time.Time         `json:"timestamp"`
+		Contents  []json.RawMessage `json:"contents"`
 	}{Role: "user", Timestamp: m.Timestamp, Contents: contents})
 }
 
 func (m *UserMessage) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Timestamp time.Time          `json:"timestamp"`
-		Contents  []json.RawMessage  `json:"contents"`
+		Timestamp time.Time         `json:"timestamp"`
+		Contents  []json.RawMessage `json:"contents"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -167,10 +167,10 @@ func (m AssistantMessage) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(struct {
-		Role       string             `json:"role"`
-		Contents   []json.RawMessage  `json:"contents"`
-		Timestamp  time.Time          `json:"timestamp"`
-		StopReason StopReason         `json:"stop_reason"`
+		Role       string            `json:"role"`
+		Contents   []json.RawMessage `json:"contents"`
+		Timestamp  time.Time         `json:"timestamp"`
+		StopReason StopReason        `json:"stop_reason"`
 	}{Role: "assistant", Contents: contents, Timestamp: m.Timestamp, StopReason: m.StopReason})
 }
 
@@ -212,12 +212,12 @@ func (m ToolMessage) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(struct {
-		Role       string             `json:"role"`
-		ToolCallID string             `json:"tool_call_id"`
-		ToolName   string             `json:"tool_name"`
-		Contents   []json.RawMessage  `json:"contents"`
-		IsError    bool               `json:"is_error"`
-		Timestamp  time.Time          `json:"timestamp"`
+		Role       string            `json:"role"`
+		ToolCallID string            `json:"tool_call_id"`
+		ToolName   string            `json:"tool_name"`
+		Contents   []json.RawMessage `json:"contents"`
+		IsError    bool              `json:"is_error"`
+		Timestamp  time.Time         `json:"timestamp"`
 	}{Role: "tool", ToolCallID: m.ToolCallID, ToolName: m.ToolName, Contents: contents, IsError: m.IsError, Timestamp: m.Timestamp})
 }
 
@@ -307,65 +307,13 @@ type Tool struct {
 
 // Request is the input to Complete and Stream.
 type Request struct {
-	Model        string   `json:"model"`
-	SystemPrompt string   `json:"system_prompt,omitempty"`
+	Model        string    `json:"model"`
+	SystemPrompt string    `json:"system_prompt,omitempty"`
 	Messages     []Message `json:"-"`
-	Tools        []Tool   `json:"tools,omitempty"`
-	Temperature  *float64 `json:"temperature,omitempty"`
-	MaxTokens    *int     `json:"max_tokens,omitempty"`
-	Seed         *int     `json:"seed,omitempty"`
-}
-
-func (r Request) MarshalJSON() ([]byte, error) {
-	messages, err := MarshalMessages(r.Messages)
-	if err != nil {
-		return nil, err
-	}
-	type requestAlias struct {
-		Model        string            `json:"model"`
-		SystemPrompt string            `json:"system_prompt,omitempty"`
-		Messages     []json.RawMessage `json:"messages"`
-		Tools        []Tool            `json:"tools,omitempty"`
-		Temperature  *float64          `json:"temperature,omitempty"`
-		MaxTokens    *int              `json:"max_tokens,omitempty"`
-		Seed         *int              `json:"seed,omitempty"`
-	}
-	return json.Marshal(requestAlias{
-		Model:        r.Model,
-		SystemPrompt: r.SystemPrompt,
-		Messages:     messages,
-		Tools:        r.Tools,
-		Temperature:  r.Temperature,
-		MaxTokens:    r.MaxTokens,
-		Seed:         r.Seed,
-	})
-}
-
-func (r *Request) UnmarshalJSON(data []byte) error {
-	var raw struct {
-		Model        string            `json:"model"`
-		SystemPrompt string            `json:"system_prompt,omitempty"`
-		Messages     []json.RawMessage `json:"messages"`
-		Tools        []Tool            `json:"tools,omitempty"`
-		Temperature  *float64          `json:"temperature,omitempty"`
-		MaxTokens    *int              `json:"max_tokens,omitempty"`
-		Seed         *int              `json:"seed,omitempty"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	messages, err := UnmarshalMessages(raw.Messages)
-	if err != nil {
-		return err
-	}
-	r.Model = raw.Model
-	r.SystemPrompt = raw.SystemPrompt
-	r.Messages = messages
-	r.Tools = raw.Tools
-	r.Temperature = raw.Temperature
-	r.MaxTokens = raw.MaxTokens
-	r.Seed = raw.Seed
-	return nil
+	Tools        []Tool    `json:"tools,omitempty"`
+	Temperature  *float64  `json:"temperature,omitempty"`
+	MaxTokens    *int      `json:"max_tokens,omitempty"`
+	Seed         *int      `json:"seed,omitempty"`
 }
 
 // StopReason indicates why generation stopped.
