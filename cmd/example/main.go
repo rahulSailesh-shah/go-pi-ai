@@ -3,23 +3,31 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
-	"sync"
+	"os"
 	"time"
 
-	"github.com/rahulSailesh-shah/go-pi-ai/provider"
-	"github.com/rahulSailesh-shah/go-pi-ai/types"
+	gopiai "github.com/rahulSailesh-shah/go-pi-ai"
+	"github.com/rahulSailesh-shah/go-pi-ai/openai"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
-	model := types.Model{
-		Provider: types.ProviderNvidia,
-		ID:       "openai/gpt-oss-20b",
+	godotenv.Load()
+
+	provider, err := openai.NewProvider(openai.Config{
+		APIKey:  os.Getenv("NVIDIA_API_KEY"),
+		BaseURL: "https://integrate.api.nvidia.com/v1",
+	})
+	if err != nil {
+		log.Fatalf("Failed to create provider: %v", err)
 	}
 
-	log.Printf("Using model: %s from provider: %s\n", model.ID, model.Provider)
+	client := gopiai.NewClient(provider)
 
-	tools := []types.Tool{
+	tools := []gopiai.Tool{
 		{
 			Name:        "getWeather",
 			Description: "Get the weather for a given location",
@@ -33,55 +41,34 @@ func main() {
 		},
 	}
 
-	conversation := types.Context{
+	req := gopiai.Request{
+		Model:        "openai/gpt-oss-20b",
 		SystemPrompt: "You are a helpful assistant. If you call a tool, include the results in your response.",
-		Messages: []types.Message{
-			types.UserMessage{
+		Messages: []gopiai.Message{
+			gopiai.UserMessage{
 				Timestamp: time.Now(),
-				Contents: []types.Content{
-					types.TextContent{Text: "Write a short poem about cats. Then check weather for Tokyo and incorporate it into your response."},
+				Contents: []gopiai.Content{
+					gopiai.TextContent{Text: "Write a short poem about cats. Then check weather for Tokyo and incorporate it into your response."},
 				},
 			},
 		},
 		Tools: tools,
 	}
 
-	log.Println("Starting streaming conversation...")
-	stream, err := provider.Stream(context.Background(), model, conversation)
+	// --- Complete example (tool call expected) ---
+	log.Println("Starting completion...")
+	firstMessage, err := client.Complete(context.Background(), req)
 	if err != nil {
-		log.Fatalf("Streaming failed: %v", err)
+		log.Fatalf("Completion failed: %v", err)
 	}
+	log.Printf("Stop reason: %s", firstMessage.StopReason)
 
-	// Drain events
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for event := range stream.Events {
-			switch e := event.(type) {
-			case types.EventTextDelta:
-				log.Printf("Text: %s", e.Delta)
-			case types.EventToolcallStart:
-				log.Println("Tool call started")
-			case types.EventDone:
-				log.Println("Stream completed")
-			}
-		}
-	}()
+	// --- Multi-turn with tool results ---
+	req.Messages = append(req.Messages, firstMessage)
 
-	log.Println("Waiting for streaming result...")
-	finalMessage := <-stream.Result
-	wg.Wait() // Wait for all events to be processed
-	if err := <-stream.Err; err != nil {
-		log.Printf("Streaming error: %v", err)
-	}
-
-	log.Println("Streaming complete")
-	conversation.Messages = append(conversation.Messages, finalMessage)
-
-	toolCalls := []types.ToolCall{}
-	for _, content := range finalMessage.Contents {
-		if tc, ok := content.(types.ToolCall); ok {
+	var toolCalls []gopiai.ToolCall
+	for _, content := range firstMessage.Contents {
+		if tc, ok := content.(gopiai.ToolCall); ok {
 			toolCalls = append(toolCalls, tc)
 		}
 	}
@@ -91,35 +78,36 @@ func main() {
 		for _, toolCall := range toolCalls {
 			log.Printf("Tool: %s - executing...", toolCall.Name)
 
-			conversation.Messages = append(conversation.Messages, types.ToolMessage{
-				ToolCallId: toolCall.ID,
+			req.Messages = append(req.Messages, gopiai.ToolMessage{
+				ToolCallID: toolCall.ID,
 				ToolName:   toolCall.Name,
 				Timestamp:  time.Now(),
-				Contents: []types.Content{
-					types.TextContent{Text: "Weather in Tokyo, Japan: 72°F (22°C), partly cloudy"},
+				Contents: []gopiai.Content{
+					gopiai.TextContent{Text: "Weather in Tokyo, Japan: 72°F (22°C), partly cloudy"},
 				},
 			})
 		}
 	}
 
 	log.Println("Starting completion call...")
-	completeMessage, err := provider.Complete(context.Background(), model, conversation)
+	stream2, err := client.Stream(context.Background(), req)
 	if err != nil {
-		log.Fatalf("Completion failed: %v", err)
+		log.Fatalf("Streaming failed: %v", err)
 	}
+	defer stream2.Close()
 
-	log.Printf("\nFinal response:\n%s\n", formatContent(completeMessage.Contents))
-}
-
-func formatContent(contents []types.Content) string {
-	var result string
-	for _, content := range contents {
-		switch c := content.(type) {
-		case types.TextContent:
-			result += c.Text + "\n\n---\n\n"
-		case types.ToolCall:
-			result += fmt.Sprintf("[Tool Call: %s]\n", c.Name)
+	fmt.Println()
+	for {
+		event, err := stream2.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Fatalf("Stream error: %v", err)
+		}
+		if e, ok := event.(gopiai.EventTextDelta); ok {
+			fmt.Print(e.Delta)
 		}
 	}
-	return result
+	fmt.Println()
 }

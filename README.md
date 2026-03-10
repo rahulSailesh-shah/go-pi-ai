@@ -2,209 +2,318 @@
 
 > A Go implementation inspired by [pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://github.com/badlogic).
 
-A flexible, provider-agnostic Go library for interacting with AI language models. Currently supports OpenAI-compatible APIs (including NVIDIA's AI endpoints) with streaming and tool calling capabilities.
-
-## Features
-
-- **Provider Abstraction**: Unified interface for multiple AI providers
-- **Streaming Support**: Real-time streaming of AI responses with event-based updates
-- **Tool Calling**: Native support for function/tool calling with structured arguments
-- **Type-Safe**: Strongly-typed message and content structures
-- **Configuration Management**: Environment-based configuration with `.env` support
-- **Multi-Turn Conversations**: Support for complex conversation flows with tool interactions
-
-## Table of Contents
-
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Architecture](#architecture)
-- [Usage](#usage)
-  - [Configuration](#configuration)
-  - [Basic Completion](#basic-completion)
-  - [Streaming Responses](#streaming-responses)
-  - [Tool Calling](#tool-calling)
-- [API Reference](#api-reference)
-- [Project Structure](#project-structure)
-- [Contributing](#contributing)
+A Go SDK for OpenAI-compatible chat completions with streaming and tool calling support. Works with OpenAI, NVIDIA, and any API that follows the OpenAI chat completions format.
 
 ## Installation
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd go-pi-ai
-
-# Install dependencies
-go mod download
-
-# Build the project
-go build -o go-pi-ai
+go get github.com/rahulSailesh-shah/go-pi-ai
 ```
 
-## Quick Start
+Module path: `github.com/rahulSailesh-shah/go-pi-ai`
 
-1. **Create a `.env` file** with your API credentials:
+Import the root package as:
 
-```env
-NVIDIA_API_URL="https://integrate.api.nvidia.com/v1"
-NVIDIA_API_KEY="your-api-key-here"
+```go
+import gopiai "github.com/rahulSailesh-shah/go-pi-ai"
 ```
 
-2. **Run the example**:
+Import the OpenAI provider as:
 
-```bash
-go run cmd/example/main.go
+```go
+import "github.com/rahulSailesh-shah/go-pi-ai/openai"
 ```
 
 ## Architecture
 
-The library is organized into several key packages:
+The SDK has two packages:
 
-```
-├── cmd/example/                # Example application
-├── config/                     # Configuration management and environment loading
-├── provider/                   # Provider interface and registry
-├── internal/provider/openai/   # OpenAI-compatible provider implementation
-└── types/                      # Core type definitions and interfaces
-```
+- **`gopiai`** (root) -- All types, interfaces, the `Client`, and the `Stream` iterator. This is what your application code depends on.
+- **`gopiai/openai`** -- The OpenAI-compatible provider implementation. Talks to any OpenAI-compatible API.
 
-### Core Concepts
-
-- **Provider**: An abstraction over AI service providers (OpenAI, NVIDIA, etc.)
-- **Model**: A specific AI model accessible through a provider
-- **Context**: Represents a conversation with system prompt, messages, and available tools
-- **Message**: User, assistant, or tool messages in a conversation
-- **Content**: Text, image, or tool call content within messages
-- **Tool**: Function definitions that the AI can invoke
-
-## Usage
-
-### Configuration
-
-The library uses environment variables for configuration, loaded via `.env` files:
+The core abstraction is the `Provider` interface:
 
 ```go
-import "github.com/rahulshah/go-pi-ai/config"
-
-// Get provider configuration
-nvidiaConfig, ok := config.GetProvider(types.ApiNvidia)
-if !ok {
-    panic("provider not found")
+type Provider interface {
+    Complete(ctx context.Context, req Request) (AssistantMessage, error)
+    Stream(ctx context.Context, req Request) (*Stream, error)
 }
 ```
 
-**Supported Environment Variables:**
-
-| Variable         | Description                   | Example                               |
-| ---------------- | ----------------------------- | ------------------------------------- |
-| `NVIDIA_API_URL` | NVIDIA API base URL           | `https://integrate.api.nvidia.com/v1` |
-| `NVIDIA_API_KEY` | NVIDIA API authentication key | `nvapi-...`                           |
-
-### Basic Completion
+`Client` wraps any `Provider`:
 
 ```go
+type Client struct { /* unexported */ }
+
+func NewClient(p Provider) *Client
+func (c *Client) Complete(ctx context.Context, req Request) (AssistantMessage, error)
+func (c *Client) Stream(ctx context.Context, req Request) (*Stream, error)
+```
+
+## Quick Start
+
+```go
+package main
+
 import (
-    "github.com/rahulshah/go-pi-ai/config"
-    "github.com/rahulshah/go-pi-ai/models"
-    "github.com/rahulshah/go-pi-ai/types"
     "context"
+    "fmt"
+    "log"
+
+    gopiai "github.com/rahulSailesh-shah/go-pi-ai"
+    "github.com/rahulSailesh-shah/go-pi-ai/openai"
 )
 
-// Get the model
-nvidiaConfig, _ := config.GetProvider(types.ApiNvidia)
-model := models.GetModel(types.ApiNvidia, nvidiaConfig.Models[0])
+func main() {
+    provider, err := openai.NewProvider(openai.Config{
+        APIKey: "your-api-key",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
 
-// Create a conversation
-conversation := types.Context{
-    SystemPrompt: "You are a helpful assistant.",
-    Messages: []types.Message{
-        types.UserMessage{
-            Contents: []types.Content{
-                types.TextContent{
-                    Text: "What is the capital of France?",
+    client := gopiai.NewClient(provider)
+
+    msg, err := client.Complete(context.Background(), gopiai.Request{
+        Model:        "gpt-4o",
+        SystemPrompt: "You are a helpful assistant.",
+        Messages: []gopiai.Message{
+            gopiai.UserMessage{
+                Contents: []gopiai.Content{
+                    gopiai.TextContent{Text: "What is the capital of France?"},
                 },
             },
         },
-    },
-}
-
-// Get completion
-message, err := model.Complete(context.Background(), conversation)
-if err != nil {
-    panic(err)
-}
-
-// Access the response
-for _, content := range message.Contents {
-    if content.Type() == "text" {
-        textContent := content.(types.TextContent)
-        println(textContent.Text)
+    })
+    if err != nil {
+        log.Fatal(err)
     }
-}
-```
 
-### Streaming Responses
-
-```go
-// Create a streaming request
-stream := model.Stream(context.Background(), conversation)
-
-// Process events in real-time
-go func() {
-    for event := range stream.Events {
-        switch e := event.(type) {
-        case types.EventTextDelta:
-            // Handle text chunks as they arrive
-            print(e.Delta)
-        case types.EventDone:
-            // Streaming completed
-            println("\nDone!")
+    for _, c := range msg.Contents {
+        if tc, ok := c.(gopiai.TextContent); ok {
+            fmt.Println(tc.Text)
         }
     }
-}()
-
-// Get the final message
-finalMessage := <-stream.Result
+}
 ```
 
-**Available Event Types:**
+## Type Reference
 
-- `EventStart`: Streaming has begun
-- `EventTextStart`: Text content block started
-- `EventTextDelta`: Incremental text chunk received
-- `EventTextEnd`: Text content block completed
-- `EventToolcallStart`: Tool call started
-- `EventToolcallDelta`: Tool call arguments chunk received
-- `EventToolcallEnd`: Tool call completed
-- `EventDone`: Streaming finished successfully
-- `EventError`: An error occurred
+### Content Types
 
-### Tool Calling
+`Content` is a sealed interface. There are three concrete implementations:
 
-Define tools that the AI can invoke:
+**TextContent** -- plain text:
 
 ```go
-conversation := types.Context{
+type TextContent struct {
+    Text string `json:"text"`
+}
+// Type() returns "text"
+```
+
+**ImageContent** -- image as URL or base64. Set `URL` for image URLs. Set `Base64` + `MimeType` for inline base64 images:
+
+```go
+type ImageContent struct {
+    URL      string `json:"url,omitempty"`
+    Base64   string `json:"base64,omitempty"`
+    MimeType string `json:"mime_type,omitempty"`
+}
+// Type() returns "image"
+```
+
+**ToolCall** -- a function/tool call from the assistant. `RawArguments` preserves the original JSON string for lossless replay in multi-turn conversations:
+
+```go
+type ToolCall struct {
+    ID           string         `json:"id"`
+    Name         string         `json:"name"`
+    Arguments    map[string]any `json:"arguments"`
+    RawArguments string         `json:"raw_arguments"`
+}
+// Type() returns "toolCall"
+```
+
+### Message Types
+
+`Message` is a sealed interface with `Role() string` and `GetContents() []Content`. Three concrete types:
+
+**UserMessage** (role: `"user"`):
+
+```go
+type UserMessage struct {
+    Timestamp time.Time `json:"timestamp"`
+    Contents  []Content `json:"-"`
+}
+```
+
+**AssistantMessage** (role: `"assistant"`):
+
+```go
+type AssistantMessage struct {
+    Contents   []Content  `json:"-"`
+    Timestamp  time.Time  `json:"timestamp"`
+    StopReason StopReason `json:"stop_reason"`
+}
+```
+
+**ToolMessage** (role: `"tool"`):
+
+```go
+type ToolMessage struct {
+    ToolCallID string    `json:"tool_call_id"`
+    ToolName   string    `json:"tool_name"`
+    Contents   []Content `json:"-"`
+    IsError    bool      `json:"is_error"`
+    Timestamp  time.Time `json:"timestamp"`
+}
+```
+
+All three message types implement custom `MarshalJSON`/`UnmarshalJSON` for full round-trip JSON serialization, including their `[]Content` fields with type discriminators.
+
+### Request
+
+```go
+type Request struct {
+    Model        string    `json:"model"`
+    SystemPrompt string    `json:"system_prompt,omitempty"`
+    Messages     []Message `json:"-"`
+    Tools        []Tool    `json:"tools,omitempty"`
+    Temperature  *float64  `json:"temperature,omitempty"`
+    MaxTokens    *int      `json:"max_tokens,omitempty"`
+    Seed         *int      `json:"seed,omitempty"`
+}
+```
+
+Optional scalar fields (`Temperature`, `MaxTokens`, `Seed`) use pointers so zero is distinguishable from unset. `Request` implements custom `MarshalJSON`/`UnmarshalJSON` for its `[]Message` field.
+
+### Tool
+
+```go
+type Tool struct {
+    Name        string         `json:"name"`
+    Description string         `json:"description"`
+    Parameters  map[string]any `json:"parameters"`
+}
+```
+
+`Parameters` is a JSON Schema object describing the tool's input parameters.
+
+### StopReason
+
+```go
+type StopReason string
+
+const (
+    StopReasonStop    StopReason = "stop"
+    StopReasonLength  StopReason = "length"
+    StopReasonToolUse StopReason = "tool_use"
+    StopReasonAborted StopReason = "aborted"
+    StopReasonError   StopReason = "error"
+    StopReasonUnknown StopReason = "unknown"
+)
+```
+
+### Errors
+
+```go
+var ErrInvalidConfig = errors.New("gopiai: invalid config")
+```
+
+Returned (wrapped) when provider config is invalid (e.g., missing API key).
+
+## Streaming
+
+`Stream` provides an iterator-based API. Call `Recv()` in a loop until `io.EOF` or error. Always `defer stream.Close()`.
+
+```go
+stream, err := client.Stream(ctx, req)
+if err != nil {
+    log.Fatal(err)
+}
+defer stream.Close()
+
+for {
+    event, err := stream.Recv()
+    if err == io.EOF {
+        break
+    }
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    switch e := event.(type) {
+    case gopiai.EventStart:
+        // streaming has begun
+    case gopiai.EventTextStart:
+        // text content block started (e.ContentIndex, e.Partial)
+    case gopiai.EventTextDelta:
+        // incremental text chunk (e.ContentIndex, e.Delta, e.Partial)
+        fmt.Print(e.Delta)
+    case gopiai.EventTextEnd:
+        // text content block completed (e.ContentIndex, e.Content, e.Partial)
+    case gopiai.EventToolcallStart:
+        // tool call started (e.ContentIndex, e.Partial)
+    case gopiai.EventToolcallDelta:
+        // tool call arguments chunk (e.ContentIndex, e.Delta, e.Partial)
+    case gopiai.EventToolcallEnd:
+        // tool call completed (e.ContentIndex, e.ToolCall, e.Partial)
+    case gopiai.EventDone:
+        // streaming finished (e.Reason, e.Message)
+        finalMessage = e.Message
+    }
+}
+```
+
+### Stream cancellation
+
+`Stream` uses `context.Context` for cancellation. When the consumer calls `Close()`, the stream's internal context is cancelled, which:
+
+1. Stops the producer goroutine from sending more events
+2. Cancels the underlying HTTP request to the provider
+3. Drains any remaining events in the channel
+
+If the parent context passed to `Stream()` is cancelled (e.g., timeout), the same cleanup happens automatically.
+
+### Event types
+
+| Event | Fields | Description |
+|-------|--------|-------------|
+| `EventStart` | (none) | Streaming has begun |
+| `EventTextStart` | `ContentIndex int`, `Partial AssistantMessage` | Text content block started |
+| `EventTextDelta` | `ContentIndex int`, `Delta string`, `Partial AssistantMessage` | Incremental text chunk |
+| `EventTextEnd` | `ContentIndex int`, `Content string`, `Partial AssistantMessage` | Text content block completed |
+| `EventToolcallStart` | `ContentIndex int`, `Partial AssistantMessage` | Tool call started |
+| `EventToolcallDelta` | `ContentIndex int`, `Delta string`, `Partial AssistantMessage` | Tool call arguments chunk |
+| `EventToolcallEnd` | `ContentIndex int`, `ToolCall ToolCall`, `Partial AssistantMessage` | Tool call completed |
+| `EventDone` | `Reason StopReason`, `Message AssistantMessage` | Streaming finished, `Message` is the complete response |
+| `EventError` | `Error error` | Error during streaming (returned as error from `Recv()`) |
+
+## Tool Calling (Multi-Turn)
+
+A complete multi-turn tool calling flow:
+
+```go
+// 1. Build request with tools
+req := gopiai.Request{
+    Model:        "gpt-4o",
     SystemPrompt: "You are a helpful assistant.",
-    Messages: []types.Message{
-        types.UserMessage{
-            Contents: []types.Content{
-                types.TextContent{
-                    Text: "What's the weather in Tokyo?",
-                },
+    Messages: []gopiai.Message{
+        gopiai.UserMessage{
+            Contents: []gopiai.Content{
+                gopiai.TextContent{Text: "What's the weather in Tokyo?"},
             },
         },
     },
-    Tools: []types.Tool{
+    Tools: []gopiai.Tool{
         {
             Name:        "getWeather",
             Description: "Get the weather for a given location",
             Parameters: map[string]any{
                 "type": "object",
                 "properties": map[string]any{
-                    "location": map[string]string{
-                        "type": "string",
-                    },
+                    "location": map[string]string{"type": "string"},
                 },
                 "required": []string{"location"},
             },
@@ -212,192 +321,156 @@ conversation := types.Context{
     },
 }
 
-// Get the response
-message, _ := model.Complete(context.Background(), conversation)
+// 2. First call -- model returns tool calls
+msg, err := client.Complete(ctx, req)
+// msg.StopReason == gopiai.StopReasonToolUse
 
-// Extract tool calls
-for _, content := range message.Contents {
-    if content.Type() == "toolCall" {
-        toolCall := content.(types.ToolCall)
+// 3. Append assistant message to conversation
+req.Messages = append(req.Messages, msg)
 
-        // Execute the tool with toolCall.Arguments
-        result := executeWeatherTool(toolCall.Arguments["location"].(string))
-
-        // Add tool result to conversation
-        conversation.Messages = append(conversation.Messages, types.ToolMessage{
-            ToolCallId: toolCall.ID,
-            ToolName:   toolCall.Name,
-            Contents: []types.Content{
-                types.TextContent{
-                    Text: result,
-                },
+// 4. Execute tool calls and append results
+for _, content := range msg.Contents {
+    if tc, ok := content.(gopiai.ToolCall); ok {
+        result := executeMyTool(tc.Name, tc.Arguments)
+        req.Messages = append(req.Messages, gopiai.ToolMessage{
+            ToolCallID: tc.ID,
+            ToolName:   tc.Name,
+            Contents: []gopiai.Content{
+                gopiai.TextContent{Text: result},
             },
         })
     }
 }
 
-// Continue the conversation with tool results
-finalMessage, _ := model.Complete(context.Background(), conversation)
+// 5. Second call -- model generates final response with tool results
+finalMsg, err := client.Complete(ctx, req)
+// or use client.Stream(ctx, req) for streaming
 ```
 
-## API Reference
+## Using with Different Providers
 
-### Core Types
-
-#### `types.Context`
-
-Represents a conversation context.
+Any OpenAI-compatible API works by setting `BaseURL` on the provider config:
 
 ```go
-type Context struct {
-    SystemPrompt string    // System-level instructions
-    Messages     []Message // Conversation history
-    Tools        []Tool    // Available tools for the AI
+// OpenAI (default, no BaseURL needed)
+provider, _ := openai.NewProvider(openai.Config{
+    APIKey: os.Getenv("OPENAI_API_KEY"),
+})
+
+// NVIDIA
+provider, _ := openai.NewProvider(openai.Config{
+    APIKey:  os.Getenv("NVIDIA_API_KEY"),
+    BaseURL: "https://integrate.api.nvidia.com/v1",
+})
+
+// Any OpenAI-compatible endpoint
+provider, _ := openai.NewProvider(openai.Config{
+    APIKey:  "key",
+    BaseURL: "https://my-endpoint.com/v1",
+})
+
+// All use the same client
+client := gopiai.NewClient(provider)
+```
+
+### OpenAI Provider Config
+
+```go
+type Config struct {
+    APIKey     string       // Required. API key for authentication.
+    BaseURL    string       // Optional. Defaults to OpenAI's API. Set for other providers.
+    HTTPClient *http.Client // Optional. Custom HTTP client for proxies, timeouts, etc.
 }
 ```
 
-#### `types.Message`
-
-Interface for all message types (UserMessage, AssistantMessage, ToolMessage).
+## Optional Request Parameters
 
 ```go
-type Message interface {
-    Role() string        // "user", "assistant", or "toolResult"
-    Content() []Content  // Message contents
+temp := 0.7
+maxTokens := 1000
+seed := 42
+
+req := gopiai.Request{
+    Model:       "gpt-4o",
+    Temperature: &temp,
+    MaxTokens:   &maxTokens,
+    Seed:        &seed,
+    // ...
 }
 ```
 
-#### `types.Content`
+## JSON Serialization
 
-Interface for content types (TextContent, ImageContent, ToolCall).
+All types support full round-trip JSON serialization. This is useful for persisting conversations to disk.
 
 ```go
-type Content interface {
-    Type() string  // "text", "image", or "toolCall"
-}
+// Marshal a request (including all messages) to JSON
+data, err := json.Marshal(req)
+
+// Unmarshal back
+var restored gopiai.Request
+err = json.Unmarshal(data, &restored)
 ```
 
-#### `types.Tool`
+Content types are serialized with a `"type"` discriminator:
 
-Defines a callable function/tool.
-
-```go
-type Tool struct {
-    Name        string         // Tool identifier
-    Description string         // What the tool does
-    Parameters  map[string]any // JSON Schema for parameters
-    Strict      bool           // Enforce strict parameter validation
-}
+```json
+{"type": "text", "data": {"text": "Hello"}}
+{"type": "image", "data": {"url": "https://..."}}
+{"type": "toolCall", "data": {"id": "call_123", "name": "getWeather", ...}}
 ```
 
-### Provider Interface
+Messages are serialized with a `"role"` discriminator:
 
-```go
-type Provider interface {
-    // Stream returns a streaming response
-    Stream(ctx context.Context, conversation types.Context) types.AssistantMessageEventStream
-
-    // Complete returns a single complete response
-    Complete(ctx context.Context, conversation types.Context) (types.AssistantMessage, error)
-}
+```json
+{"role": "user", "timestamp": "...", "contents": [...]}
+{"role": "assistant", "timestamp": "...", "stop_reason": "stop", "contents": [...]}
+{"role": "tool", "tool_call_id": "call_123", "tool_name": "getWeather", "contents": [...]}
 ```
 
-### Model Registry
+Helper functions for working with message slices directly:
 
 ```go
-// Add a model to the registry
-registry.AddModel(providerType types.ModelProvider, id string, model provider.Provider)
+// Marshal/unmarshal individual messages
+raw, err := gopiai.MarshalMessage(msg)
+msg, err := gopiai.UnmarshalMessage(raw)
 
-// Get a model from the registry
-registry.GetModel(providerType types.ModelProvider, id string) provider.Provider
+// Marshal/unmarshal message slices
+raws, err := gopiai.MarshalMessages(messages)
+messages, err := gopiai.UnmarshalMessages(raws)
 ```
 
 ## Project Structure
 
 ```
 .
-├── cmd/example/
-│   └── main.go                      # Example usage
-├── go.mod                           # Go module definition
-├── go.sum                           # Dependency checksums
-├── .env.example                     # Environment configuration template
-├── .gitignore                       # Git ignore rules
-├── config/
-│   └── config.go                    # Configuration loading and management
-├── provider/
-│   ├── provider.go                  # Provider interface definition
-│   └── registry.go                  # Model registration
-├── internal/provider/
-│   └── openai/
-│       └── openai.go                # OpenAI-compatible provider implementation
-└── types/
-    └── types.go                     # Core type definitions
+├── client.go          # Provider interface, Client wrapper
+├── types.go           # Content, Message, Tool, Request types + JSON serialization
+├── events.go          # Streaming event types (EventStart, EventTextDelta, etc.)
+├── stream.go          # Stream iterator (Recv/Close) with context cancellation
+├── openai/
+│   └── openai.go      # OpenAI-compatible provider implementation
+└── cmd/example/
+    └── main.go         # Example: Complete + Stream with tool calling
 ```
 
-## Adding New Providers
+## Running the Example
 
-To add support for a new AI provider:
+1. Copy `.env.example` to `.env` and fill in your API key
+2. Run:
 
-1. **Implement the `Provider` interface** in `internal/provider/<provider-name>/`:
-
-```go
-type MyProvider struct {
-    // provider-specific fields
-}
-
-func (p *MyProvider) Stream(ctx context.Context, conversation types.Context) types.AssistantMessageEventStream {
-    // Implementation
-}
-
-func (p *MyProvider) Complete(ctx context.Context, conversation types.Context) (types.AssistantMessage, error) {
-    // Implementation
-}
-```
-
-2. **Add configuration** in `config/config.go`:
-
-```go
-const (
-    ApiMyProvider ModelProvider = "myprovider"
-)
-
-// In init():
-AppConfig.Providers[types.ApiMyProvider] = ProviderConfig{
-    BaseURL: getEnv("MYPROVIDER_API_URL"),
-    APIKey:  getEnv("MYPROVIDER_API_KEY"),
-    Models:  []string{"model-id"},
-}
-```
-
-3. **Register models** in `provider/registry.go`:
-
-```go
-if config, ok := config.GetProvider(types.ApiMyProvider); ok {
-    for _, modelID := range config.Models {
-        provider := myprovider.NewMyProvider(config, modelID)
-        registry.AddModel(types.ApiMyProvider, modelID, provider)
-    }
-}
+```bash
+go run cmd/example/main.go
 ```
 
 ## Dependencies
 
-- [openai-go](https://github.com/openai/openai-go) - OpenAI Go SDK
-- [godotenv](https://github.com/joho/godotenv) - Environment variable loading
-- [gjson](https://github.com/tidwall/gjson) - JSON parsing utilities
-- [sjson](https://github.com/tidwall/sjson) - JSON modification utilities
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+- [openai-go](https://github.com/openai/openai-go) -- OpenAI Go SDK (used by the `openai` provider)
 
 ## License
 
-[Add your license here]
+MIT
 
 ## Acknowledgments
 
-This project is a Go implementation inspired by [pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://github.com/badlogic). Special thanks to him for the original TypeScript implementation that served as the foundation for this library's design.
-
-- Built with the [OpenAI Go SDK](https://github.com/openai/openai-go)
-- Supports OpenAI-compatible APIs
+Inspired by [pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://github.com/badlogic). Built with the [OpenAI Go SDK](https://github.com/openai/openai-go).
