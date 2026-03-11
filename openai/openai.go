@@ -96,6 +96,7 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 		output := gopiai.AssistantMessage{
 			Timestamp: time.Now(),
 			Contents:  []gopiai.Content{},
+			Usage:     gopiai.Usage{},
 		}
 
 		acc := openaiSDK.ChatCompletionAccumulator{}
@@ -111,6 +112,9 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 
 		for openaiStream.Next() {
 			chunk := openaiStream.Current()
+			if u := usageFromOpenAI(chunk); u.TotalTokens > 0 {
+				output.Usage = u
+			}
 
 			if !acc.AddChunk(chunk) {
 				sendEvent(sctx, events, gopiai.EventError{Error: fmt.Errorf("failed to accumulate chunk")})
@@ -387,5 +391,13 @@ func stopReasonFromOpenAI(reason string) gopiai.StopReason {
 		return gopiai.StopReasonAborted
 	default:
 		return gopiai.StopReasonUnknown
+	}
+}
+
+func usageFromOpenAI(chunk openaiSDK.ChatCompletionChunk) gopiai.Usage {
+	return gopiai.Usage{
+		PromptTokens:     int(chunk.Usage.PromptTokens),
+		CompletionTokens: int(chunk.Usage.CompletionTokens),
+		TotalTokens:      int(chunk.Usage.TotalTokens),
 	}
 }

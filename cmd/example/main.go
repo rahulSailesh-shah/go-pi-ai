@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -115,14 +116,7 @@ func main() {
 	}
 
 	fmt.Println("\n\n--------------------------------")
+	finalJson, _ := json.MarshalIndent(streamResult, "", "  ")
+	fmt.Println(string(finalJson))
 
-	log.Printf("\n\nAccumulated response (%d content blocks):", len(streamResult.Contents))
-	for i, c := range streamResult.Contents {
-		switch content := c.(type) {
-		case gopiai.TextContent:
-			log.Printf("  [%d] text: %s", i, content.Text)
-		case gopiai.ToolCall:
-			log.Printf("  [%d] tool call: %s(%v)", i, content.Name, content.Arguments)
-		}
-	}
 }

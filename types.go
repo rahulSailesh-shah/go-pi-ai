@@ -151,10 +151,17 @@ func (m *UserMessage) UnmarshalJSON(data []byte) error {
 }
 
 // AssistantMessage represents a message from the assistant.
+
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
 type AssistantMessage struct {
 	Contents   []Content  `json:"-"`
 	Timestamp  time.Time  `json:"timestamp"`
 	StopReason StopReason `json:"stop_reason"`
+	Usage      Usage      `json:"usage"`
 }
 
 func (m AssistantMessage) isMessage()             {}
@@ -171,7 +178,8 @@ func (m AssistantMessage) MarshalJSON() ([]byte, error) {
 		Contents   []json.RawMessage `json:"contents"`
 		Timestamp  time.Time         `json:"timestamp"`
 		StopReason StopReason        `json:"stop_reason"`
-	}{Role: "assistant", Contents: contents, Timestamp: m.Timestamp, StopReason: m.StopReason})
+		Usage      Usage             `json:"usage"`
+	}{Role: "assistant", Contents: contents, Timestamp: m.Timestamp, StopReason: m.StopReason, Usage: m.Usage})
 }
 
 func (m *AssistantMessage) UnmarshalJSON(data []byte) error {
@@ -179,6 +187,7 @@ func (m *AssistantMessage) UnmarshalJSON(data []byte) error {
 		Contents   []json.RawMessage `json:"contents"`
 		Timestamp  time.Time         `json:"timestamp"`
 		StopReason StopReason        `json:"stop_reason"`
+		Usage      Usage             `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -190,6 +199,7 @@ func (m *AssistantMessage) UnmarshalJSON(data []byte) error {
 	m.Contents = contents
 	m.Timestamp = raw.Timestamp
 	m.StopReason = raw.StopReason
+	m.Usage = raw.Usage
 	return nil
 }
 
