@@ -158,15 +158,24 @@ type Usage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 type AssistantMessage struct {
-	Contents   []Content  `json:"-"`
-	Timestamp  time.Time  `json:"timestamp"`
-	StopReason StopReason `json:"stop_reason"`
-	Usage      Usage      `json:"usage"`
+	Contents     []Content  `json:"-"`
+	Timestamp    time.Time  `json:"timestamp"`
+	StopReason   StopReason `json:"stop_reason"`
+	Usage        Usage      `json:"usage"`
+	ErrorMessage string     `json:"error_message,omitempty"`
 }
 
 func (m AssistantMessage) isMessage()             {}
 func (m AssistantMessage) Role() string           { return "assistant" }
 func (m AssistantMessage) GetContents() []Content { return m.Contents }
+
+func (m AssistantMessage) HasError() bool {
+	return m.ErrorMessage != ""
+}
+
+func (m AssistantMessage) HasPartialContent() bool {
+	return len(m.Contents) > 0
+}
 
 func (m AssistantMessage) MarshalJSON() ([]byte, error) {
 	contents, err := marshalContents(m.Contents)
@@ -174,20 +183,22 @@ func (m AssistantMessage) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(struct {
-		Role       string            `json:"role"`
-		Contents   []json.RawMessage `json:"contents"`
-		Timestamp  time.Time         `json:"timestamp"`
-		StopReason StopReason        `json:"stop_reason"`
-		Usage      Usage             `json:"usage"`
-	}{Role: "assistant", Contents: contents, Timestamp: m.Timestamp, StopReason: m.StopReason, Usage: m.Usage})
+		Role         string            `json:"role"`
+		Contents     []json.RawMessage `json:"contents"`
+		Timestamp    time.Time         `json:"timestamp"`
+		StopReason   StopReason        `json:"stop_reason"`
+		Usage        Usage             `json:"usage"`
+		ErrorMessage string            `json:"error_message,omitempty"`
+	}{Role: "assistant", Contents: contents, Timestamp: m.Timestamp, StopReason: m.StopReason, Usage: m.Usage, ErrorMessage: m.ErrorMessage})
 }
 
 func (m *AssistantMessage) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Contents   []json.RawMessage `json:"contents"`
-		Timestamp  time.Time         `json:"timestamp"`
-		StopReason StopReason        `json:"stop_reason"`
-		Usage      Usage             `json:"usage"`
+		Contents     []json.RawMessage `json:"contents"`
+		Timestamp    time.Time         `json:"timestamp"`
+		StopReason   StopReason        `json:"stop_reason"`
+		Usage        Usage             `json:"usage"`
+		ErrorMessage string            `json:"error_message"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -200,6 +211,7 @@ func (m *AssistantMessage) UnmarshalJSON(data []byte) error {
 	m.Timestamp = raw.Timestamp
 	m.StopReason = raw.StopReason
 	m.Usage = raw.Usage
+	m.ErrorMessage = raw.ErrorMessage
 	return nil
 }
 

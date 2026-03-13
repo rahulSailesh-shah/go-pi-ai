@@ -14,7 +14,6 @@ type Stream struct {
 	cancel context.CancelFunc
 	ctx    context.Context
 	once   sync.Once
-	err    error
 }
 
 // NewStream creates a new Stream. The provided context is used for cancellation —
@@ -36,14 +35,7 @@ func NewStream(ctx context.Context) (*Stream, chan<- Event) {
 func (s *Stream) Recv() (Event, error) {
 	event, ok := <-s.events
 	if !ok {
-		if s.err != nil {
-			return nil, s.err
-		}
 		return nil, io.EOF
-	}
-	if e, ok := event.(EventError); ok {
-		s.err = e.Error
-		return nil, e.Error
 	}
 	return event, nil
 }

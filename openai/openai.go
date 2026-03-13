@@ -117,7 +117,9 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 			}
 
 			if !acc.AddChunk(chunk) {
-				sendEvent(sctx, events, gopiai.EventError{Error: fmt.Errorf("failed to accumulate chunk")})
+				output.StopReason = gopiai.StopReasonError
+				output.ErrorMessage = "failed to accumulate chunk"
+				sendFinalEvent(events, gopiai.EventDone{Reason: output.StopReason, Message: output})
 				return
 			}
 
@@ -164,10 +166,12 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 			}
 
 			delta := chunk.Choices[0].Delta
+			// chunkData, _ := json.MarshalIndent(chunk, "", "  ")
+			// fmt.Println("chunk:\t\t", string(chunkData))
 
 			if delta.Content != "" {
 				if currentBlockType != "text" {
-					currentContentIndex++
+					currentContentIndex += 1
 					currentBlockType = "text"
 					if !sendEvent(sctx, events, gopiai.EventTextStart{
 						ContentIndex: currentContentIndex,
@@ -211,16 +215,20 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 		}
 
 		if err := openaiStream.Err(); err != nil {
-			sendEvent(sctx, events, gopiai.EventError{Error: err})
+			output.StopReason = gopiai.StopReasonError
+			output.ErrorMessage = err.Error()
+			sendFinalEvent(events, gopiai.EventDone{Reason: output.StopReason, Message: output})
 			return
 		}
 
 		if sctx.Err() != nil {
-			sendEvent(sctx, events, gopiai.EventError{Error: sctx.Err()})
+			output.StopReason = gopiai.StopReasonError
+			output.ErrorMessage = sctx.Err().Error()
+			sendFinalEvent(events, gopiai.EventDone{Reason: output.StopReason, Message: output})
 			return
 		}
 
-		sendEvent(sctx, events, gopiai.EventDone{
+		sendFinalEvent(events, gopiai.EventDone{
 			Reason:  output.StopReason,
 			Message: output,
 		})
@@ -238,6 +246,13 @@ func sendEvent(ctx context.Context, events chan<- gopiai.Event, event gopiai.Eve
 	case <-ctx.Done():
 		return false
 	}
+}
+
+// sendFinalEvent sends a terminal event unconditionally, ignoring context
+// cancellation. This ensures the consumer always receives the final EventDone
+// even when the context triggered the termination.
+func sendFinalEvent(events chan<- gopiai.Event, event gopiai.Event) {
+	events <- event
 }
 
 func buildParams(req gopiai.Request) openaiSDK.ChatCompletionNewParams {

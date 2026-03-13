@@ -61,9 +61,3 @@ type EventDone struct {
 }
 
 func (e EventDone) isEvent() {}
-
-type EventError struct {
-	Error error
-}
-
-func (e EventError) isEvent() {}

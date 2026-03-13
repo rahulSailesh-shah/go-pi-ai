@@ -2,7 +2,7 @@
 
 > A Go implementation inspired by [pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://github.com/badlogic).
 
-A Go SDK for OpenAI-compatible chat completions with streaming and tool calling support. Works with OpenAI, NVIDIA, and any API that follows the OpenAI chat completions format.
+A Go SDK for OpenAI-compatible chat completions with streaming and tool calling support. Works with OpenAI, NVIDIA, Cerebras, and any API that follows the OpenAI chat completions format.
 
 ## Installation
 
@@ -152,9 +152,28 @@ type UserMessage struct {
 
 ```go
 type AssistantMessage struct {
-    Contents   []Content  `json:"-"`
-    Timestamp  time.Time  `json:"timestamp"`
-    StopReason StopReason `json:"stop_reason"`
+    Contents     []Content  `json:"-"`
+    Timestamp    time.Time  `json:"timestamp"`
+    StopReason   StopReason `json:"stop_reason"`
+    Usage        Usage      `json:"usage"`
+    ErrorMessage string     `json:"error_message,omitempty"`
+}
+```
+
+Helper methods:
+
+```go
+msg.HasError() bool          // true when ErrorMessage is set
+msg.HasPartialContent() bool // true when Contents is non-empty
+```
+
+**Usage** -- token usage statistics:
+
+```go
+type Usage struct {
+    PromptTokens     int `json:"prompt_tokens"`
+    CompletionTokens int `json:"completion_tokens"`
+    TotalTokens      int `json:"total_tokens"`
 }
 ```
 
@@ -186,7 +205,7 @@ type Request struct {
 }
 ```
 
-Optional scalar fields (`Temperature`, `MaxTokens`, `Seed`) use pointers so zero is distinguishable from unset. `Request` implements custom `MarshalJSON`/`UnmarshalJSON` for its `[]Message` field.
+Optional scalar fields (`Temperature`, `MaxTokens`, `Seed`) use pointers so zero is distinguishable from unset.
 
 ### Tool
 
@@ -225,7 +244,9 @@ Returned (wrapped) when provider config is invalid (e.g., missing API key).
 
 ## Streaming
 
-`Stream` provides an iterator-based API. Call `Recv()` in a loop until `io.EOF` or error. Always `defer stream.Close()`.
+`Stream` provides an iterator-based API. Call `Recv()` in a loop until `io.EOF`. Always `defer stream.Close()`.
+
+Both successful completions and errors are delivered through `EventDone`. The `AssistantMessage` inside always contains the full state -- on error, `StopReason` is `"error"`, `ErrorMessage` has the details, and `Contents` holds any partial content streamed before the failure.
 
 ```go
 stream, err := client.Stream(ctx, req)
@@ -234,13 +255,11 @@ if err != nil {
 }
 defer stream.Close()
 
+var msg gopiai.AssistantMessage
 for {
     event, err := stream.Recv()
     if err == io.EOF {
         break
-    }
-    if err != nil {
-        log.Fatal(err)
     }
 
     switch e := event.(type) {
@@ -260,9 +279,33 @@ for {
     case gopiai.EventToolcallEnd:
         // tool call completed (e.ContentIndex, e.ToolCall, e.Partial)
     case gopiai.EventDone:
-        // streaming finished (e.Reason, e.Message)
-        finalMessage = e.Message
+        // terminal event -- always delivered, even on error
+        msg = e.Message
     }
+}
+
+if msg.HasError() {
+    log.Printf("Error: %s", msg.ErrorMessage)
+    if msg.HasPartialContent() {
+        // partial content was streamed before the error
+    }
+}
+```
+
+### Error handling
+
+There is no separate error event. All errors (stream failures, context cancellation, timeouts) are surfaced through `EventDone` with:
+
+- `StopReason` set to `"error"`
+- `ErrorMessage` containing the error details
+- `Contents` preserving any partial content streamed before the failure
+
+This unified model gives consumers a single code path for both success and failure, which simplifies agent loops that need retry or recovery logic:
+
+```go
+msg := eventDone.Message
+if msg.HasError() {
+    // decide: retry, continue from partial, compact messages, or abort
 }
 ```
 
@@ -274,7 +317,7 @@ for {
 2. Cancels the underlying HTTP request to the provider
 3. Drains any remaining events in the channel
 
-If the parent context passed to `Stream()` is cancelled (e.g., timeout), the same cleanup happens automatically.
+If the parent context passed to `Stream()` is cancelled (e.g., timeout), the same cleanup happens automatically. The final `EventDone` is always delivered regardless of cancellation.
 
 ### Event types
 
@@ -287,8 +330,7 @@ If the parent context passed to `Stream()` is cancelled (e.g., timeout), the sam
 | `EventToolcallStart` | `ContentIndex int`, `Partial AssistantMessage` | Tool call started |
 | `EventToolcallDelta` | `ContentIndex int`, `Delta string`, `Partial AssistantMessage` | Tool call arguments chunk |
 | `EventToolcallEnd` | `ContentIndex int`, `ToolCall ToolCall`, `Partial AssistantMessage` | Tool call completed |
-| `EventDone` | `Reason StopReason`, `Message AssistantMessage` | Streaming finished, `Message` is the complete response |
-| `EventError` | `Error error` | Error during streaming (returned as error from `Recv()`) |
+| `EventDone` | `Reason StopReason`, `Message AssistantMessage` | Terminal event -- always delivered. Check `Message.HasError()` for errors |
 
 ## Tool Calling (Multi-Turn)
 
@@ -363,6 +405,12 @@ provider, _ := openai.NewProvider(openai.Config{
     BaseURL: "https://integrate.api.nvidia.com/v1",
 })
 
+// Cerebras
+provider, _ := openai.NewProvider(openai.Config{
+    APIKey:  os.Getenv("CEREBRAS_API_KEY"),
+    BaseURL: "https://api.cerebras.ai/v1",
+})
+
 // Any OpenAI-compatible endpoint
 provider, _ := openai.NewProvider(openai.Config{
     APIKey:  "key",
@@ -424,7 +472,7 @@ Messages are serialized with a `"role"` discriminator:
 
 ```json
 {"role": "user", "timestamp": "...", "contents": [...]}
-{"role": "assistant", "timestamp": "...", "stop_reason": "stop", "contents": [...]}
+{"role": "assistant", "timestamp": "...", "stop_reason": "stop", "usage": {...}, "contents": [...]}
 {"role": "tool", "tool_call_id": "call_123", "tool_name": "getWeather", "contents": [...]}
 ```
 
@@ -445,13 +493,13 @@ messages, err := gopiai.UnmarshalMessages(raws)
 ```
 .
 ├── client.go          # Provider interface, Client wrapper
-├── types.go           # Content, Message, Tool, Request types + JSON serialization
-├── events.go          # Streaming event types (EventStart, EventTextDelta, etc.)
+├── types.go           # Content, Message, Tool, Request, Usage types + JSON serialization
+├── events.go          # Streaming event types (EventStart, EventTextDelta, EventDone, etc.)
 ├── stream.go          # Stream iterator (Recv/Close) with context cancellation
 ├── openai/
 │   └── openai.go      # OpenAI-compatible provider implementation
 └── cmd/example/
-    └── main.go         # Example: Complete + Stream with tool calling
+    └── main.go        # Example: streaming with tool calling
 ```
 
 ## Running the Example
