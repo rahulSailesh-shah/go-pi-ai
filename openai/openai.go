@@ -137,8 +137,9 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 				output.Usage = u
 			}
 
+			// Error from openai SDK if the chunk is not added to the accumulator
 			if !acc.AddChunk(chunk) {
-				sendFinalEvent(events, gopiai.EventDone{
+				sendFinalEvent(sctx, events, gopiai.EventDone{
 					Reason:  gopiai.StopReasonError,
 					Message: output,
 					Err:     fmt.Errorf("failed to accumulate chunk"),
@@ -146,10 +147,12 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 				return
 			}
 
+			// If the finish reason is not empty, set the stop reason
 			if len(chunk.Choices) > 0 && chunk.Choices[0].FinishReason != "" {
 				output.StopReason = stopReasonFromOpenAI(string(chunk.Choices[0].FinishReason))
 			}
 
+			// After model has finished streaming text, add the accumulated content to the output
 			if content, ok := acc.JustFinishedContent(); ok && content != "" {
 				output.Contents = append(output.Contents, gopiai.TextContent{Text: content})
 				if !sendEvent(sctx, events, gopiai.EventTextEnd{
@@ -162,6 +165,7 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 				currentBlockType = ""
 			}
 
+			// If the tool call is finished, add the tool call to the output
 			if toolCall, ok := acc.JustFinishedToolCall(); ok {
 				args := make(map[string]any)
 				if err := json.Unmarshal([]byte(toolCall.Arguments), &args); err != nil {
@@ -190,6 +194,7 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 
 			delta := chunk.Choices[0].Delta
 
+			// Stream delta texts, these are not saved in the output, acc.JustFinishedContent() is used to get the text
 			if delta.Content != "" {
 				if currentBlockType != "text" {
 					currentContentIndex += 1
@@ -210,6 +215,7 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 				}
 			}
 
+			// Stream tool call deltas, these are not saved in the output, acc.JustFinishedToolCall() is used to get the tool call
 			if len(delta.ToolCalls) > 0 {
 				for _, toolCallDelta := range delta.ToolCalls {
 					if currentBlockType != "toolCall" {
@@ -236,7 +242,7 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 		}
 
 		if err := openaiStream.Err(); err != nil {
-			sendFinalEvent(events, gopiai.EventDone{
+			sendFinalEvent(sctx, events, gopiai.EventDone{
 				Reason:  gopiai.StopReasonError,
 				Message: output,
 				Err:     fmt.Errorf("stream error: %w", err),
@@ -245,7 +251,7 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 		}
 
 		if sctx.Err() != nil {
-			sendFinalEvent(events, gopiai.EventDone{
+			sendFinalEvent(sctx, events, gopiai.EventDone{
 				Reason:  gopiai.StopReasonAborted,
 				Message: output,
 				Err:     sctx.Err(),
@@ -253,7 +259,7 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 			return
 		}
 
-		sendFinalEvent(events, gopiai.EventDone{
+		sendFinalEvent(sctx, events, gopiai.EventDone{
 			Reason:  output.StopReason,
 			Message: output,
 		})
@@ -273,10 +279,14 @@ func sendEvent(ctx context.Context, events chan<- gopiai.Event, event gopiai.Eve
 	}
 }
 
-// sendFinalEvent sends a terminal event unconditionally, ignoring context
-// cancellation. This ensures the consumer always receives the final EventDone
-// even when the context triggered the termination.
-func sendFinalEvent(events chan<- gopiai.Event, event gopiai.Event) {
-	events <- event
+// sendFinalEvent sends a terminal event, checking context cancellation.
+// If context is cancelled, it returns false to avoid blocking when the buffer
+// might be full and no one is reading.
+func sendFinalEvent(ctx context.Context, events chan<- gopiai.Event, event gopiai.Event) bool {
+	select {
+	case events <- event:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
-
