@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -42,13 +43,33 @@ func NewProvider(cfg Config) (*Provider, error) {
 	return &Provider{client: &client}, nil
 }
 
+// providerError wraps an API error and signals whether it is retryable.
+type providerError struct {
+	err       error
+	retryable bool
+}
+
+func (e *providerError) Error() string   { return e.err.Error() }
+func (e *providerError) Unwrap() error   { return e.err }
+func (e *providerError) Retryable() bool { return e.retryable }
+
+func wrapProviderError(err error, msg string) error {
+	wrapped := fmt.Errorf("%s: %w", msg, err)
+	retryable := false
+	var apiErr *openaiSDK.Error
+	if errors.As(err, &apiErr) {
+		retryable = apiErr.StatusCode == 429 || apiErr.StatusCode == 503
+	}
+	return &providerError{err: wrapped, retryable: retryable}
+}
+
 // Complete sends a non-streaming chat completion request.
 func (c *Provider) Complete(ctx context.Context, req gopiai.Request) (gopiai.AssistantMessage, error) {
 	params := buildParams(req)
 
 	response, err := c.client.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return gopiai.AssistantMessage{}, fmt.Errorf("completion failed: %w", err)
+		return gopiai.AssistantMessage{}, wrapProviderError(err, "completion failed")
 	}
 
 	output := gopiai.AssistantMessage{
@@ -117,9 +138,11 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 			}
 
 			if !acc.AddChunk(chunk) {
-				output.StopReason = gopiai.StopReasonError
-				output.ErrorMessage = "failed to accumulate chunk"
-				sendFinalEvent(events, gopiai.EventDone{Reason: output.StopReason, Message: output})
+				sendFinalEvent(events, gopiai.EventDone{
+					Reason:  gopiai.StopReasonError,
+					Message: output,
+					Err:     fmt.Errorf("failed to accumulate chunk"),
+				})
 				return
 			}
 
@@ -166,8 +189,6 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 			}
 
 			delta := chunk.Choices[0].Delta
-			// chunkData, _ := json.MarshalIndent(chunk, "", "  ")
-			// fmt.Println("chunk:\t\t", string(chunkData))
 
 			if delta.Content != "" {
 				if currentBlockType != "text" {
@@ -215,16 +236,20 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 		}
 
 		if err := openaiStream.Err(); err != nil {
-			output.StopReason = gopiai.StopReasonError
-			output.ErrorMessage = err.Error()
-			sendFinalEvent(events, gopiai.EventDone{Reason: output.StopReason, Message: output})
+			sendFinalEvent(events, gopiai.EventDone{
+				Reason:  gopiai.StopReasonError,
+				Message: output,
+				Err:     fmt.Errorf("stream error: %w", err),
+			})
 			return
 		}
 
 		if sctx.Err() != nil {
-			output.StopReason = gopiai.StopReasonError
-			output.ErrorMessage = sctx.Err().Error()
-			sendFinalEvent(events, gopiai.EventDone{Reason: output.StopReason, Message: output})
+			sendFinalEvent(events, gopiai.EventDone{
+				Reason:  gopiai.StopReasonAborted,
+				Message: output,
+				Err:     sctx.Err(),
+			})
 			return
 		}
 
@@ -255,164 +280,3 @@ func sendFinalEvent(events chan<- gopiai.Event, event gopiai.Event) {
 	events <- event
 }
 
-func buildParams(req gopiai.Request) openaiSDK.ChatCompletionNewParams {
-	messages := buildMessages(req)
-	tools := buildTools(req.Tools)
-
-	params := openaiSDK.ChatCompletionNewParams{
-		Messages: messages,
-		Model:    req.Model,
-		Tools:    tools,
-	}
-
-	if req.Temperature != nil {
-		params.Temperature = openaiSDK.Float(*req.Temperature)
-	}
-	if req.MaxTokens != nil {
-		params.MaxTokens = openaiSDK.Int(int64(*req.MaxTokens))
-	}
-	if req.Seed != nil {
-		params.Seed = openaiSDK.Int(int64(*req.Seed))
-	}
-
-	return params
-}
-
-func buildMessages(req gopiai.Request) []openaiSDK.ChatCompletionMessageParamUnion {
-	var messages []openaiSDK.ChatCompletionMessageParamUnion
-
-	if req.SystemPrompt != "" {
-		messages = append(messages, openaiSDK.SystemMessage(req.SystemPrompt))
-	}
-
-	for _, message := range req.Messages {
-		switch msg := message.(type) {
-		case gopiai.UserMessage:
-			messages = append(messages, openaiSDK.UserMessage(buildUserContent(msg.Contents)))
-		case gopiai.AssistantMessage:
-			messages = append(messages, buildAssistantMessage(msg))
-		case gopiai.ToolMessage:
-			messages = append(messages, openaiSDK.ToolMessage(buildToolContent(msg.Contents), msg.ToolCallID))
-		}
-	}
-
-	return messages
-}
-
-func buildAssistantMessage(msg gopiai.AssistantMessage) openaiSDK.ChatCompletionMessageParamUnion {
-	var toolCalls []openaiSDK.ChatCompletionMessageToolCallUnionParam
-	var textParts []openaiSDK.ChatCompletionAssistantMessageParamContentArrayOfContentPartUnion
-
-	for _, content := range msg.Contents {
-		switch c := content.(type) {
-		case gopiai.TextContent:
-			textParts = append(textParts, openaiSDK.ChatCompletionAssistantMessageParamContentArrayOfContentPartUnion{
-				OfText: &openaiSDK.ChatCompletionContentPartTextParam{Text: c.Text},
-			})
-		case gopiai.ToolCall:
-			toolCalls = append(toolCalls, openaiSDK.ChatCompletionMessageToolCallUnionParam{
-				OfFunction: &openaiSDK.ChatCompletionMessageFunctionToolCallParam{
-					ID: c.ID,
-					Function: openaiSDK.ChatCompletionMessageFunctionToolCallFunctionParam{
-						Name:      c.Name,
-						Arguments: c.RawArguments,
-					},
-				},
-			})
-		}
-	}
-
-	assistantMsg := openaiSDK.ChatCompletionAssistantMessageParam{}
-	if len(textParts) > 0 {
-		assistantMsg.Content = openaiSDK.ChatCompletionAssistantMessageParamContentUnion{
-			OfArrayOfContentParts: textParts,
-		}
-	}
-	if len(toolCalls) > 0 {
-		assistantMsg.ToolCalls = toolCalls
-	}
-
-	return openaiSDK.ChatCompletionMessageParamUnion{
-		OfAssistant: &assistantMsg,
-	}
-}
-
-func buildUserContent(contents []gopiai.Content) []openaiSDK.ChatCompletionContentPartUnionParam {
-	var parts []openaiSDK.ChatCompletionContentPartUnionParam
-
-	for _, content := range contents {
-		switch c := content.(type) {
-		case gopiai.TextContent:
-			parts = append(parts, openaiSDK.ChatCompletionContentPartUnionParam{
-				OfText: &openaiSDK.ChatCompletionContentPartTextParam{Text: c.Text},
-			})
-		case gopiai.ImageContent:
-			url := c.URL
-			if url == "" && c.Base64 != "" && c.MimeType != "" {
-				url = fmt.Sprintf("data:%s;base64,%s", c.MimeType, c.Base64)
-			}
-			if url != "" {
-				parts = append(parts, openaiSDK.ChatCompletionContentPartUnionParam{
-					OfImageURL: &openaiSDK.ChatCompletionContentPartImageParam{
-						ImageURL: openaiSDK.ChatCompletionContentPartImageImageURLParam{URL: url},
-					},
-				})
-			}
-		}
-	}
-
-	return parts
-}
-
-func buildToolContent(contents []gopiai.Content) []openaiSDK.ChatCompletionContentPartTextParam {
-	var parts []openaiSDK.ChatCompletionContentPartTextParam
-
-	for _, content := range contents {
-		if c, ok := content.(gopiai.TextContent); ok {
-			parts = append(parts, openaiSDK.ChatCompletionContentPartTextParam{Text: c.Text})
-		}
-	}
-
-	return parts
-}
-
-func buildTools(tools []gopiai.Tool) []openaiSDK.ChatCompletionToolUnionParam {
-	var openaiTools []openaiSDK.ChatCompletionToolUnionParam
-
-	for _, tool := range tools {
-		toolDef := openaiSDK.ChatCompletionFunctionTool(
-			openaiSDK.FunctionDefinitionParam{
-				Name:        tool.Name,
-				Description: openaiSDK.String(tool.Description),
-				Parameters:  tool.Parameters,
-				Strict:      openaiSDK.Bool(false),
-			},
-		)
-		openaiTools = append(openaiTools, toolDef)
-	}
-
-	return openaiTools
-}
-
-func stopReasonFromOpenAI(reason string) gopiai.StopReason {
-	switch reason {
-	case "stop":
-		return gopiai.StopReasonStop
-	case "length":
-		return gopiai.StopReasonLength
-	case "tool_calls":
-		return gopiai.StopReasonToolUse
-	case "content_filter":
-		return gopiai.StopReasonAborted
-	default:
-		return gopiai.StopReasonUnknown
-	}
-}
-
-func usageFromOpenAI(chunk openaiSDK.ChatCompletionChunk) gopiai.Usage {
-	return gopiai.Usage{
-		PromptTokens:     int(chunk.Usage.PromptTokens),
-		CompletionTokens: int(chunk.Usage.CompletionTokens),
-		TotalTokens:      int(chunk.Usage.TotalTokens),
-	}
-}

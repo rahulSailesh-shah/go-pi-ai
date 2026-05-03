@@ -5,7 +5,7 @@ BUILD_DIR=bin
 SOURCE_DIR=cmd/example
 
 build:
-	go build -o $(BUILD_DIR)/$(BINARY_NAME) $(SOURCE_DIR)/main.go
+	cd $(SOURCE_DIR) && go build -o ../../$(BUILD_DIR)/$(BINARY_NAME) .
 
 run: build
 	$(BUILD_DIR)/$(BINARY_NAME)

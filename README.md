@@ -12,6 +12,13 @@ go get github.com/rahulSailesh-shah/go-pi-ai
 
 Module path: `github.com/rahulSailesh-shah/go-pi-ai`
 
+## Breaking Changes
+
+If you're upgrading from an earlier version, note these breaking changes:
+
+- **Error handling**: `AssistantMessage.ErrorMessage` and `AssistantMessage.HasError()` have been removed. Errors are now surfaced through `EventDone.Err` in streaming responses. Check `EventDone.Err != nil` instead of `Message.HasError()`.
+- **Client construction**: `NewClient` now accepts optional `ClientOption` parameters. The simple `NewClient(provider)` still works, but you can now add retry, logging, and timeout options.
+
 Import the root package as:
 
 ```go
@@ -40,15 +47,53 @@ type Provider interface {
 }
 ```
 
-`Client` wraps any `Provider`:
+`Client` wraps any `Provider` with retry logic, logging, and timeout support:
 
 ```go
 type Client struct { /* unexported */ }
 
-func NewClient(p Provider) *Client
+func NewClient(p Provider, opts ...ClientOption) *Client
 func (c *Client) Complete(ctx context.Context, req Request) (AssistantMessage, error)
 func (c *Client) Stream(ctx context.Context, req Request) (*Stream, error)
 ```
+
+### Client Options
+
+Configure client behavior with functional options:
+
+```go
+// Retry logic for Complete calls
+client := gopiai.NewClient(provider, 
+    gopiai.WithRetry(3, 1*time.Second)) // max 3 attempts, 1s base delay
+
+// Logging for observability
+client := gopiai.NewClient(provider,
+    gopiai.WithLogger(myLogger))
+
+// Per-request timeout for Complete calls
+client := gopiai.NewClient(provider,
+    gopiai.WithTimeout(30*time.Second))
+
+// Combine options
+client := gopiai.NewClient(provider,
+    gopiai.WithRetry(3, 1*time.Second),
+    gopiai.WithLogger(myLogger),
+    gopiai.WithTimeout(30*time.Second))
+```
+
+**Logger interface:**
+
+```go
+type Logger interface {
+    Log(ctx context.Context, msg string, fields map[string]any)
+}
+```
+
+**Retry behavior:**
+- Only `Complete` supports automatic retry (streaming does not)
+- Retries are exponential with a 30-second cap
+- Provider errors can implement `RetryableError` to signal retryability
+- Network timeouts are automatically retried
 
 ## Quick Start
 
@@ -72,7 +117,7 @@ func main() {
         log.Fatal(err)
     }
 
-    client := gopiai.NewClient(provider)
+    client := gopiai.NewClient(provider) // or add options: gopiai.WithRetry(...), gopiai.WithLogger(...), etc.
 
     msg, err := client.Complete(context.Background(), gopiai.Request{
         Model:        "gpt-4o",
@@ -152,19 +197,11 @@ type UserMessage struct {
 
 ```go
 type AssistantMessage struct {
-    Contents     []Content  `json:"-"`
-    Timestamp    time.Time  `json:"timestamp"`
-    StopReason   StopReason `json:"stop_reason"`
-    Usage        Usage      `json:"usage"`
-    ErrorMessage string     `json:"error_message,omitempty"`
+    Contents   []Content  `json:"-"`
+    Timestamp  time.Time  `json:"timestamp"`
+    StopReason StopReason `json:"stop_reason"`
+    Usage      Usage      `json:"usage"`
 }
-```
-
-Helper methods:
-
-```go
-msg.HasError() bool          // true when ErrorMessage is set
-msg.HasPartialContent() bool // true when Contents is non-empty
 ```
 
 **Usage** -- token usage statistics:
@@ -246,7 +283,7 @@ Returned (wrapped) when provider config is invalid (e.g., missing API key).
 
 `Stream` provides an iterator-based API. Call `Recv()` in a loop until `io.EOF`. Always `defer stream.Close()`.
 
-Both successful completions and errors are delivered through `EventDone`. The `AssistantMessage` inside always contains the full state -- on error, `StopReason` is `"error"`, `ErrorMessage` has the details, and `Contents` holds any partial content streamed before the failure.
+Both successful completions and errors are delivered through `EventDone`. The `AssistantMessage` inside always contains the full state -- on error, `StopReason` is `"error"`, `Err` has the error details, and `Contents` holds any partial content streamed before the failure.
 
 ```go
 stream, err := client.Stream(ctx, req)
@@ -281,32 +318,34 @@ for {
     case gopiai.EventDone:
         // terminal event -- always delivered, even on error
         msg = e.Message
+        if e.Err != nil {
+            log.Printf("Stream error: %v", e.Err)
+        }
     }
 }
 
-if msg.HasError() {
-    log.Printf("Error: %s", msg.ErrorMessage)
-    if msg.HasPartialContent() {
-        // partial content was streamed before the error
-    }
+if msg.StopReason == gopiai.StopReasonError {
+    // handle error - partial content may be in msg.Contents
 }
 ```
 
 ### Error handling
 
-There is no separate error event. All errors (stream failures, context cancellation, timeouts) are surfaced through `EventDone` with:
+There is no separate error event. All errors (stream failures, context cancellation, timeouts) are surfaced through `EventDone.Err`:
 
-- `StopReason` set to `"error"`
-- `ErrorMessage` containing the error details
-- `Contents` preserving any partial content streamed before the failure
+- `EventDone.Err` is non-nil when the stream ended due to an error
+- `EventDone.Message` contains whatever partial content was received before the error
+- `EventDone.Reason` indicates the stop reason (e.g., `StopReasonError`, `StopReasonAborted`)
 
 This unified model gives consumers a single code path for both success and failure, which simplifies agent loops that need retry or recovery logic:
 
 ```go
-msg := eventDone.Message
-if msg.HasError() {
-    // decide: retry, continue from partial, compact messages, or abort
-}
+case gopiai.EventDone:
+    if e.Err != nil {
+        // handle error - e.Message may contain partial content
+        log.Printf("Stream error: %v", e.Err)
+    }
+    // always process e.Message for final state
 ```
 
 ### Stream cancellation
@@ -330,7 +369,7 @@ If the parent context passed to `Stream()` is cancelled (e.g., timeout), the sam
 | `EventToolcallStart` | `ContentIndex int`, `Partial AssistantMessage` | Tool call started |
 | `EventToolcallDelta` | `ContentIndex int`, `Delta string`, `Partial AssistantMessage` | Tool call arguments chunk |
 | `EventToolcallEnd` | `ContentIndex int`, `ToolCall ToolCall`, `Partial AssistantMessage` | Tool call completed |
-| `EventDone` | `Reason StopReason`, `Message AssistantMessage` | Terminal event -- always delivered. Check `Message.HasError()` for errors |
+| `EventDone` | `Reason StopReason`, `Message AssistantMessage`, `Err error` | Terminal event -- always delivered. Check `Err` for errors |
 
 ## Tool Calling (Multi-Turn)
 
@@ -492,28 +531,57 @@ messages, err := gopiai.UnmarshalMessages(raws)
 
 ```
 .
-├── client.go          # Provider interface, Client wrapper
-├── types.go           # Content, Message, Tool, Request, Usage types + JSON serialization
+├── client.go          # Provider interface, Client wrapper with retry/log/timeout
+├── content.go         # Content types (TextContent, ImageContent, ToolCall)
+├── message.go         # Message types (UserMessage, AssistantMessage, ToolMessage)
+├── request.go         # Request, Tool, StopReason types
 ├── events.go          # Streaming event types (EventStart, EventTextDelta, EventDone, etc.)
 ├── stream.go          # Stream iterator (Recv/Close) with context cancellation
 ├── openai/
-│   └── openai.go      # OpenAI-compatible provider implementation
+│   ├── openai.go      # OpenAI-compatible provider implementation
+│   └── params.go      # Build helpers and converters for OpenAI API
 └── cmd/example/
-    └── main.go        # Example: streaming with tool calling
+    ├── main.go        # Example: simple streaming and tool calling
+    ├── go.mod         # Separate module for example dependencies
+    └── go.sum
 ```
 
 ## Running the Example
 
-1. Copy `.env.example` to `.env` and fill in your API key
-2. Run:
+The example demonstrates both simple streaming and tool calling:
+
+1. Copy `.env.example` to `.env` and fill in your API key:
 
 ```bash
-go run cmd/example/main.go
+cp .env.example .env
+# Edit .env with your OPENAI_API_KEY
 ```
+
+2. Run using the Makefile:
+
+```bash
+make run
+```
+
+Or build and run manually:
+
+```bash
+make build
+./bin/example
+```
+
+The example will show:
+- **Example 1**: Simple streaming request with a haiku
+- **Example 2**: Tool calling with weather function (requires a model that supports function calling)
 
 ## Dependencies
 
+The SDK has minimal dependencies:
+
 - [openai-go](https://github.com/openai/openai-go) -- OpenAI Go SDK (used by the `openai` provider)
+
+The example application additionally uses:
+- [godotenv](https://github.com/joho/godotenv) -- For loading environment variables from .env files
 
 ## License
 

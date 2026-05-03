@@ -55,9 +55,12 @@ type EventToolcallEnd struct {
 
 func (e EventToolcallEnd) isEvent() {}
 
+// EventDone is the terminal event. Err is non-nil when the stream ended due to
+// an error. Message contains whatever partial content was received before the error.
 type EventDone struct {
 	Reason  StopReason
 	Message AssistantMessage
+	Err     error
 }
 
 func (e EventDone) isEvent() {}

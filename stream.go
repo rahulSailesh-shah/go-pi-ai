@@ -21,7 +21,7 @@ type Stream struct {
 // Close() also cancels the stream's context.
 func NewStream(ctx context.Context) (*Stream, chan<- Event) {
 	ctx, cancel := context.WithCancel(ctx)
-	ch := make(chan Event)
+	ch := make(chan Event, 1)
 	s := &Stream{
 		events: ch,
 		ctx:    ctx,
