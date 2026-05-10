@@ -259,6 +259,20 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 			return
 		}
 
+	
+		flushAccumulator(sctx, events, &acc, &output, &currentContentIndex)
+
+		// If the model returned no usable content at all, surface as error
+		// rather than silently completing with an empty assistant message.
+		if len(output.Contents) == 0 {
+			sendFinalEvent(sctx, events, gopiai.EventDone{
+				Reason:  gopiai.StopReasonError,
+				Message: output,
+				Err:     fmt.Errorf("provider returned empty response (finish_reason=%s)", output.StopReason),
+			})
+			return
+		}
+
 		sendFinalEvent(sctx, events, gopiai.EventDone{
 			Reason:  output.StopReason,
 			Message: output,
@@ -266,6 +280,76 @@ func (c *Provider) Stream(ctx context.Context, req gopiai.Request) (*gopiai.Stre
 	}()
 
 	return stream, nil
+}
+
+func flushAccumulator(
+	ctx context.Context,
+	events chan<- gopiai.Event,
+	acc *openaiSDK.ChatCompletionAccumulator,
+	output *gopiai.AssistantMessage,
+	currentContentIndex *int,
+) {
+	if len(acc.Choices) == 0 {
+		return
+	}
+	finalMsg := acc.Choices[0].Message
+
+	seenToolCalls := make(map[string]bool)
+	hasText := false
+	for _, c := range output.Contents {
+		switch v := c.(type) {
+		case gopiai.ToolCall:
+			seenToolCalls[v.ID] = true
+		case gopiai.TextContent:
+			hasText = true
+		}
+	}
+
+	if !hasText && finalMsg.Content != "" {
+		output.Contents = append(output.Contents, gopiai.TextContent{Text: finalMsg.Content})
+	}
+
+	for _, tc := range finalMsg.ToolCalls {
+		if seenToolCalls[tc.ID] {
+			continue
+		}
+		args := make(map[string]any)
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+			args = make(map[string]any)
+		}
+		toolCall := gopiai.ToolCall{
+			ID:           tc.ID,
+			Name:         tc.Function.Name,
+			Arguments:    args,
+			RawArguments: tc.Function.Arguments,
+		}
+		output.Contents = append(output.Contents, toolCall)
+
+		*currentContentIndex++
+		idx := *currentContentIndex
+		if !sendEvent(ctx, events, gopiai.EventToolcallStart{
+			ContentIndex: idx,
+			Partial:      *output,
+		}) {
+			return
+		}
+		if tc.Function.Arguments != "" {
+			if !sendEvent(ctx, events, gopiai.EventToolcallDelta{
+				ContentIndex: idx,
+				Delta:        tc.Function.Arguments,
+				Partial:      *output,
+			}) {
+				return
+			}
+		}
+		if !sendEvent(ctx, events, gopiai.EventToolcallEnd{
+			ContentIndex: idx,
+			ToolCall:     toolCall,
+			Partial:      *output,
+		}) {
+			return
+		}
+	}
 }
 
 // sendEvent sends an event to the channel, returning false if the context

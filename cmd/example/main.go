@@ -51,7 +51,7 @@ func main() {
 
 func simpleCompleteExample(client *gopiai.Client) {
 	req := gopiai.Request{
-		Model: "openai/gpt-oss-120b",
+		Model: "nvidia/nemotron-3-nano-30b-a3b",
 		Messages: []gopiai.Message{
 			gopiai.UserMessage{
 				Timestamp: time.Now(),
@@ -82,7 +82,7 @@ func simpleCompleteExample(client *gopiai.Client) {
 
 func simpleStreamingExample(client *gopiai.Client) {
 	req := gopiai.Request{
-		Model: "openai/gpt-oss-120b",
+		Model: "nvidia/nemotron-3-nano-30b-a3b",
 		Messages: []gopiai.Message{
 			gopiai.UserMessage{
 				Timestamp: time.Now(),
@@ -146,7 +146,7 @@ func toolCallingExample(client *gopiai.Client) {
 	}
 
 	req := gopiai.Request{
-		Model: "openai/gpt-oss-120b",
+		Model: "nvidia/nemotron-3-nano-30b-a3b",
 		Messages: []gopiai.Message{
 			gopiai.UserMessage{
 				Timestamp: time.Now(),
